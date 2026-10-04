@@ -9,6 +9,9 @@ from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
 from app.core.config import get_settings
+from app.core.logging_config import configure_logging
+
+logger = configure_logging()
 
 
 class AudioDownloadError(Exception):
@@ -28,10 +31,15 @@ class YouTubeAudioDownloader:
 
     def download_audio(self, url: str) -> DownloadedAudioFile:
         if shutil.which("ffmpeg") is None:
+            logger.error(
+                "Audio download cannot start: FFmpeg is not available in PATH"
+            )
             raise AudioDownloadError("FFmpeg is not installed or not available in PATH.")
 
+        logger.info("Inspecting YouTube media metadata")
         metadata = self._fetch_metadata(url)
         self._validate_metadata(metadata)
+        logger.info("Media metadata validated; starting audio download and conversion")
 
         temp_dir = Path(tempfile.mkdtemp(prefix="muzply-audio-"))
         output_template = str(temp_dir / "%(title)s.%(ext)s")
@@ -61,11 +69,13 @@ class YouTubeAudioDownloader:
                 info = ydl.extract_info(url, download=True)
                 prepared_name = ydl.prepare_filename(info)
         except DownloadError as exc:
+            logger.exception("yt-dlp failed while downloading or converting audio")
             self.cleanup(temp_dir)
             raise AudioDownloadError(
                 f"Unable to download audio from the supplied URL: {exc}"
             ) from exc
         except Exception as exc:
+            logger.exception("Unexpected failure while downloading or converting audio")
             self.cleanup(temp_dir)
             raise AudioDownloadError(
                 f"Unexpected error while downloading audio: {exc}"
@@ -73,6 +83,10 @@ class YouTubeAudioDownloader:
 
         mp3_path = Path(prepared_name).with_suffix(".mp3")
         if not mp3_path.exists():
+            logger.error(
+                "Conversion reported success but expected MP3 is missing: %s",
+                mp3_path,
+            )
             self.cleanup(temp_dir)
             raise AudioDownloadError(
                 "Audio conversion completed unsuccessfully. Ensure FFmpeg is installed."
@@ -96,10 +110,12 @@ class YouTubeAudioDownloader:
             with YoutubeDL(options) as ydl:
                 return ydl.extract_info(url, download=False)
         except DownloadError as exc:
+            logger.exception("yt-dlp failed while inspecting media metadata")
             raise AudioDownloadError(
                 f"Unable to inspect the supplied URL before download: {exc}"
             ) from exc
         except Exception as exc:
+            logger.exception("Unexpected failure while inspecting media metadata")
             raise AudioDownloadError(
                 f"Unexpected error while inspecting the supplied URL: {exc}"
             ) from exc
